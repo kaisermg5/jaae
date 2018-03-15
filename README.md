@@ -7,3 +7,5 @@ A tileset animations editor for pokémon gen 3 games.
   - Pillow
   - DevkitARM
   
+# Source
+  https://github.com/kaisermg5/jaae
