@@ -1,4 +1,6 @@
+.idea
 jaae/__pycache__
+tests
 *.gba
 *.sav
 *.jaae

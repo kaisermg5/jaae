@@ -107,9 +107,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def error_message(self, title, description):
         QtWidgets.QMessageBox.critical(self, title, description)
 
+    def closeEvent(self, event):
+        if not self.handler.get_animations_count() or self.yes_no_question('There are animations loaded', "Are you sure you wan't to exit?"):
+            event.accept()
+        else:
+            event.ignore()
+
     def load_rom(self):
         filename = self.open_file_dialog('Open ROM', 'GBA rom (*.gba)')
         if filename:
+            if self.handler.rom_loaded():
+                self.ui.tileset_grb.setEnabled(False)
+                self.ui.header_offset_txt.setText('')
+                self.tileset_scene.clear()
             self.handler.set_rom_filename(filename)
             self.ui.menuEdit.setEnabled(True)
             self.ui.actionInsert_to_ROM.setEnabled(True)
@@ -134,7 +144,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def import_animations(self):
         if self.handler.tileset_loaded():
-            filename = self.open_file_dialog('Import Animations', 'JAAE file (*.jaae) ; All Files (*)')
+            filename = self.open_file_dialog('Import Animations', 'JAAE file (*.jaae) ;; All Files (*)')
             if filename:
                 try:
                     self.handler.import_animations(filename)

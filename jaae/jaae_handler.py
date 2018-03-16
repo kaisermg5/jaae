@@ -12,7 +12,7 @@ from PIL import Image
 from . import lz77
 from . import gba_image
 from .animation import Animation
-from . import jaee_fileformat
+from . import jaae_fileformat
 
 
 class JaaeError(Exception):
@@ -33,7 +33,7 @@ class JaaeHandler:
         'AXVE': 0x286cf4
     }
 
-    ROUTINE_SIZE = 0x80
+    ROUTINE_SIZE = 0x84
     AS = 'arm-none-eabi-as'
     TMP_SRC = os.path.join(JAAE_BASE_PATH, 'tmp_animation_table.inc')
     TMP_OBJECT = os.path.join(JAAE_BASE_PATH, 'tmp.o')
@@ -60,6 +60,12 @@ class JaaeHandler:
         return '.'
 
     def set_rom_filename(self, filename):
+        if self.rom_filename is not None:
+            self.rom_code = None
+            self.tileset_header_offset = None
+            self.is_primary_tileset = None
+            self.tileset_palettes = [None] * 16
+            self.tileset_img = None
         self.rom_filename = filename
 
     def rom_loaded(self):
@@ -68,10 +74,13 @@ class JaaeHandler:
     def tileset_loaded(self):
         return self.tileset_img is not None
 
-    def read_rom_code(self):
-        with open(self.rom_filename, 'rb') as f:
-            f.seek(0xac)
-            rom_code = (f.read(4)).decode('utf-8')
+    def read_rom_code(self, contents=None):
+        if contents is None:
+            with open(self.rom_filename, 'rb') as f:
+                f.seek(0xac)
+                rom_code = (f.read(4)).decode('utf-8')
+        else:
+            rom_code = contents[0xac:0xb0].decode('utf-8')
         if rom_code not in ('BPEE', 'BPRE', 'AXVE'):
             raise JaaeError('Unknown rom code "{0}".'.format(rom_code))
         self.rom_code = rom_code
@@ -85,6 +94,9 @@ class JaaeHandler:
         offset &= 0x7ffffff
         with open(self.rom_filename, 'rb') as f:
             contents = f.read()
+        if self.rom_code is None:
+            self.read_rom_code(contents)
+
         if len(contents) < (offset + 8):
             raise JaaeError('The header offset "{0}" is too big.'.format(hex(offset)))
 
@@ -233,7 +245,7 @@ class JaaeHandler:
         self.working_frame = index
 
     def add_frame(self, label, img_path, split_image_in=1):
-        if re.match(r'^[a-zA-Z1-9_]+$', label) is None:
+        if re.match(r'^[a-zA-Z0-9_]+$', label) is None:
             raise JaaeError('Labels can only have letters, numbers and underscores.')
         elif split_image_in < 1:
             raise JaaeError('Invalid divisor.')
@@ -249,8 +261,11 @@ class JaaeHandler:
                     raise JaaeError('Label "{0}" already used.'.format(label))
 
         # Get image data
-        try:
+        try:            
             img = Image.open(img_path)
+        except OSError:
+            raise JaaeError('Not a valid image.')
+        try:
             data = gba_image.from_img_to_4bpp(img)
         except gba_image.ImageFormatError as e:
             raise JaaeError(str(e))
@@ -333,16 +348,16 @@ class JaaeHandler:
     def export_animations(self, filename):
         if len(self.animations) == 0 and len(self.frames) == 0:
             raise JaaeError('There has to be at least one animation and one frame to save.')
-        jaee_fileformat.save_file(filename, self.animations, self.frames)
+        jaae_fileformat.save_file(filename, self.animations, self.frames)
 
     def import_animations(self, filename):
         if self.tileset_img is None:
             raise JaaeError('No tileset loaded.')
         try:
-            self.animations, self.frames = jaee_fileformat.read_file(filename)
+            self.animations, self.frames = jaae_fileformat.read_file(filename)
             self.working_animation = 0
             self.working_frame = 0
-        except jaee_fileformat.InvalidJaaeFileFormat:
+        except jaae_fileformat.InvalidJaaeFileFormat:
             raise JaaeError('Invalid JAAE file.')
 
     def get_needed_space(self):
@@ -373,10 +388,6 @@ class JaaeHandler:
                     raise JaaeError("DevkitARM isn't set up correctly.")
             else:
                 raise JaaeError("DEVKITARM environment variable isn't set.")
-
-        # Load rom code
-        if self.rom_code is None:
-            self.read_rom_code()
 
         # Generate frames text
         frames_txt = ''
@@ -443,9 +454,11 @@ class JaaeHandler:
 
                 # Insert to rom
                 with open(self.rom_filename, 'rb+') as f:
-                    f.seek(self.tileset_header_offset + 0x14)
+                    # Write pointer to the routine
+                    f.seek(self.tileset_header_offset + (0x14, 0x10)[self.rom_code == 'BPRE'])
                     f.write((offset | 0x8000001).to_bytes(4, 'little'))
 
+                    # Write routine
                     f.seek(offset)
                     if f.tell() != offset:
                         f.write(b'\xff' * (offset - f.tell()))
@@ -458,6 +471,7 @@ class JaaeHandler:
         else:
             output_txt += '\nAssembling failed.\n'
 
+        # Delete tmp files
         if os.path.exists(self.TMP_BIN):
             os.remove(self.TMP_BIN)
         if os.path.exists(self.TMP_OBJECT):
